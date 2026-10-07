@@ -1,3 +1,11 @@
+## [1.53.4](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.53.3...v1.53.4) (2026-10-07)
+
+
+### Bug Fixes
+
+* **eval-compare:** address the CodeRabbit review on [#238](https://github.com/opendatahub-io/agent-eval-harness/issues/238) ([4b112b6](https://github.com/opendatahub-io/agent-eval-harness/commit/4b112b67b5a1fcb1f43157fb6e221f6b3a70b331))
+* **eval-compare:** report a wall clock for duration_s runs, and stop rounding per-turn costs to $0.00 ([a7aa586](https://github.com/opendatahub-io/agent-eval-harness/commit/a7aa5865697686b1b54c3215a985c89beb3d470b))
+
 ## [1.53.3](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.53.2...v1.53.3) (2026-10-02)
 
 
