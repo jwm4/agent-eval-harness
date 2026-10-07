@@ -254,6 +254,7 @@ Every sub-key is optional.
 | --- | --- | --- | --- |
 | `runner` | mapping | `{type: claude-code}` | Per-judge runner block, parsed exactly like the top-level [`runner`](runner.md) (`type`, `effort`, `command`, `env`, …). Lets the judge use a different runner/model stack than the skill-under-test. |
 | `allowed_tools` | list | `[Read, Grep, Glob]` | Tool allowlist for the judge. Read-only by default; add `Bash` only under sandboxing (see below). |
+| `denied_tools` | list | `[Bash, WebFetch, WebSearch, Agent]` | Tools the judge may never use, minus anything in `allowed_tools`. Needed because an allow list only pre-approves tools on the Claude Code runner; unlisted ones stay callable. `[]` disables the default. |
 | `context` | list of paths | `[]` | Dirs/files staged **read-only** under `./.context/<name>` for the agent to consult. Distinct from the top-level `context:`, which is appended to the prompt text. |
 | `inputs` | list | all output dirs | Which collected output dirs (by `outputs[].path` name) to stage as files. Use `[.]` to stage everything. |
 | `timeout` | int | `execution.timeout` or `600` | Per-run wall-clock budget in seconds. |
@@ -268,8 +269,8 @@ Per case, the harness:
    symlinked under `./.context/` are **read-only staged inputs**, and a pre-created
    `./output/` dir is **writable** for the verdict.
 2. **Instantiates the judge's own runner** (`RUNNERS[agent.runner.type]`, default
-   `claude-code`) with `permissions={"allow": agent.allowed_tools}`, so the judge gets its
-   own runner and read-only tool policy — independent of the skill-under-test, via a
+   `claude-code`) with `permissions={"allow": agent.allowed_tools, "deny": agent.denied_tools}`,
+   so the judge gets its own runner and read-only tool policy — independent of the skill-under-test, via a
    shallow `EvalConfig` copy carrying the judge's runner and permissions.
 3. **Runs one prompt-mode turn** with the rendered instructions (same template variables
    LLM judges get), reads the verdict, and tears the workspace down. Runner cost/tokens

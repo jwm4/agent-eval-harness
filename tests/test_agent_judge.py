@@ -281,9 +281,13 @@ class TestRunnerIsolation:
         judge = _agent_judge(feedback_type="int", score_range=[0, 5])
         self._load_and_run(judge, {"score": 1, "rationale": "x"}, cap)
         # Permissions passed to from_config AND set on the copied config.
+        # An allow list alone does not confine a headless Claude Code judge
+        # (unlisted tools stay callable), so the escape hatches are denied.
+        expected = {"allow": ["Read", "Grep", "Glob"],
+                    "deny": ["Bash", "WebFetch", "WebSearch", "Agent"]}
         perms = cap["from_config_overrides"].get("permissions")
-        assert perms == {"allow": ["Read", "Grep", "Glob"]}
-        assert cap["config_permissions"] == {"allow": ["Read", "Grep", "Glob"]}
+        assert perms == expected
+        assert cap["config_permissions"] == expected
 
     def test_allowed_tools_override(self):
         cap = {}
@@ -291,7 +295,26 @@ class TestRunnerIsolation:
                              allowed_tools=["Read", "Grep", "Glob", "Bash"])
         self._load_and_run(judge, {"passed": True, "rationale": "x"}, cap)
         perms = cap["from_config_overrides"].get("permissions")
-        assert perms == {"allow": ["Read", "Grep", "Glob", "Bash"]}
+        # An explicitly allowed tool drops out of the default deny list.
+        assert perms == {"allow": ["Read", "Grep", "Glob", "Bash"],
+                         "deny": ["WebFetch", "WebSearch", "Agent"]}
+
+    def test_denied_tools_override(self):
+        cap = {}
+        judge = _agent_judge(feedback_type="bool",
+                             allowed_tools=["Read"],
+                             denied_tools=["Bash", "Write"])
+        self._load_and_run(judge, {"passed": True, "rationale": "x"}, cap)
+        perms = cap["from_config_overrides"].get("permissions")
+        assert perms == {"allow": ["Read"], "deny": ["Bash", "Write"]}
+
+    def test_denied_tools_empty_list_disables_default_deny(self):
+        cap = {}
+        judge = _agent_judge(feedback_type="bool",
+                             allowed_tools=["Read"], denied_tools=[])
+        self._load_and_run(judge, {"passed": True, "rationale": "x"}, cap)
+        perms = cap["from_config_overrides"].get("permissions")
+        assert perms == {"allow": ["Read"], "deny": []}
 
     def test_judge_runner_is_independent_of_skill_runner(self):
         """The judge's own runner/permissions must not be the skill-under-test's
@@ -309,7 +332,9 @@ class TestRunnerIsolation:
         # Judge got its OWN claude-code runner + read-only perms, NOT the
         # skill's cli runner / broad perms.
         assert cap["config_runner"].type == "claude-code"
-        assert cap["config_permissions"] == {"allow": ["Read", "Grep", "Glob"]}
+        assert cap["config_permissions"] == {
+            "allow": ["Read", "Grep", "Glob"],
+            "deny": ["Bash", "WebFetch", "WebSearch", "Agent"]}
         # And the original skill config was not mutated by the shallow copy.
         assert config.runner.type == "cli"
         assert config.permissions == {"allow": ["Read", "Write", "Bash", "Edit"]}

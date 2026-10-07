@@ -2000,6 +2000,10 @@ def _call_structured_judge_openai(prompt, model, feedback_type, images=None,
     return JudgeOutcome(verdict[0], verdict[1], usage=usage)
 
 
+# Tools an agent judge must never have, whatever its allow list says: shell,
+# network, and sub-agents (which would carry their own tool set).
+_DEFAULT_JUDGE_DENIED_TOOLS = ("Bash", "WebFetch", "WebSearch", "Agent")
+
 def _call_structured_judge_via_runner(prompt, model, feedback_type, config, jc,
                                       bounds=None, images=None):
     """Run a prompt-based judge through the eval runner abstraction.
@@ -2044,7 +2048,10 @@ def _call_structured_judge_via_runner(prompt, model, feedback_type, config, jc,
         # Cursor CLI has no budget option, so for a Cursor-backed judge this is a
         # best-effort ceiling only and `timeout_s` is the effective bound.
         max_budget_usd=2.0,
-        permissions={"allow": ["Read", "Grep", "Glob"]},
+        # Allow only pre-approves; deny is what actually confines a headless
+        # Claude Code judge (see _load_agent_judge for the full note).
+        permissions={"allow": ["Read", "Grep", "Glob"],
+                     "deny": list(_DEFAULT_JUDGE_DENIED_TOOLS)},
         staged_files=staged_images,
     )
     try:
@@ -3118,6 +3125,17 @@ def _load_agent_judge(jc, config, project_root=None):
 
     # --- Agent-judge knobs (with defaults) ---
     allowed_tools = agent.get("allowed_tools") or ["Read", "Grep", "Glob"]
+    # An allow list only pre-approves tools; in headless mode Claude Code still
+    # lets the judge call the others (Bash, WebFetch, WebSearch, Agent) with
+    # no prompt, so a "read-only" judge could shell out or read live GitHub
+    # (observed 2026-10-07: a judge quoted an upstream issue title that was
+    # not in its staged inputs). Deny the escape hatches explicitly; the
+    # Claude Code runner turns this into --disallowed-tools. `denied_tools:`
+    # in the agent block overrides the default.
+    denied_tools = agent.get("denied_tools")
+    if denied_tools is None:
+        denied_tools = list(_DEFAULT_JUDGE_DENIED_TOOLS)
+    denied_tools = [t for t in denied_tools if t not in set(allowed_tools)]
     stage_inputs = agent.get("inputs")  # None/[] => all files
     context_dirs = agent.get("context") or []
     # Copy (not symlink) context when the judge can write, so a prompt-injected
@@ -3191,11 +3209,13 @@ def _load_agent_judge(jc, config, project_root=None):
             if hasattr(config, "inputs"):
                 judge_config.inputs = copy.copy(config.inputs)
                 judge_config.inputs.tools = []
-            judge_config.permissions = {"allow": list(allowed_tools)}
+            judge_permissions = {"allow": list(allowed_tools),
+                                 "deny": list(denied_tools)}
+            judge_config.permissions = dict(judge_permissions)
             runner = RUNNERS[judge_runner.type].from_config(
                 judge_config,
                 log_prefix=None,
-                permissions={"allow": list(allowed_tools)},
+                permissions=dict(judge_permissions),
                 effort=judge_runner.effort,
             )
             result = runner.execute(
