@@ -2004,6 +2004,7 @@ def _call_structured_judge_openai(prompt, model, feedback_type, images=None,
 # network, and sub-agents (which would carry their own tool set).
 _DEFAULT_JUDGE_DENIED_TOOLS = ("Bash", "WebFetch", "WebSearch", "Agent")
 
+
 def _call_structured_judge_via_runner(prompt, model, feedback_type, config, jc,
                                       bounds=None, images=None):
     """Run a prompt-based judge through the eval runner abstraction.
@@ -3000,12 +3001,6 @@ def _interpret_agent_verdict(obj, is_bool, jc):
     return value, rationale or "agent judge verdict"
 
 
-# File-writing tools. When any is in a judge's allowed_tools, context is COPIED
-# rather than symlinked so the judge cannot write THROUGH ./.context/ to real
-# project files and escape the isolated workspace (CWE-59/829).
-_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"}
-
-
 def _copy_path(src, dest):
     """Copy a file or directory tree into the staged workspace, dereferencing
     nested symlinks so no link remains through which a write could escape."""
@@ -3015,16 +3010,15 @@ def _copy_path(src, dest):
         shutil.copy2(src, dest)
 
 
-def _stage_agent_workspace(workspace, record, stage_inputs, context_dirs, root,
-                           writable=False):
+def _stage_agent_workspace(workspace, record, stage_inputs, context_dirs, root):
     """Stage an isolated judge workspace.
 
     - The case's output files (record["files"], relpath -> content), filtered
       by ``stage_inputs`` (a list of output-dir names; "." or empty = all).
-    - Each ``context_dirs`` entry staged under ./.context/<name>: symlinked (a
-      live, read-only-by-tool-policy pointer) for the default read-only toolset,
-      or COPIED when ``writable`` (the judge holds a write-capable tool) so a
-      judge write cannot follow the link to real project files (CWE-59/829).
+    - Each ``context_dirs`` entry COPIED under ./.context/<name>, never
+      symlinked: every judge can write (it has to, for output/score.json), so
+      a link would let a prompt-injected judge write through to real project
+      files (CWE-59/829).
     - A pre-created ./output/ dir for the verdict file.
     """
     # 1. Output files from the case record.
@@ -3056,9 +3050,8 @@ def _stage_agent_workspace(workspace, record, stage_inputs, context_dirs, root,
             dest.write_text(content)
         except OSError:
             pass
-    # 2. Context dirs/files staged under ./.context/ — symlinked (read-only by
-    #    tool policy) by default, or copied when the judge can write, so writes
-    #    cannot escape through the link to real project files (CWE-59/829).
+    # 2. Context dirs/files copied under ./.context/, so a judge write cannot
+    #    escape through a link to real project files (CWE-59/829).
     if context_dirs:
         ctx_root = workspace / ".context"
         ctx_root.mkdir(parents=True, exist_ok=True)
@@ -3071,15 +3064,9 @@ def _stage_agent_workspace(workspace, record, stage_inputs, context_dirs, root,
                 continue
             dest = ctx_root / src.name
             try:
-                if writable:
-                    _copy_path(src, dest)
-                else:
-                    os.symlink(src, dest)
-            except (OSError, NotImplementedError):
-                try:
-                    _copy_path(src, dest)
-                except OSError:
-                    pass
+                _copy_path(src, dest)
+            except OSError:
+                pass
     # 3. Verdict output dir.
     (workspace / "output").mkdir(parents=True, exist_ok=True)
 
@@ -3131,16 +3118,17 @@ def _load_agent_judge(jc, config, project_root=None):
     # (observed 2026-10-07: a judge quoted an upstream issue title that was
     # not in its staged inputs). Deny the escape hatches explicitly; the
     # Claude Code runner turns this into --disallowed-tools. `denied_tools:`
-    # in the agent block overrides the default.
+    # in the agent block overrides the default. A scoped allow such as
+    # `Bash(pytest:*)` lifts the bare `Bash` deny too: a deny beats an allow,
+    # so leaving it would take the tool away altogether.
     denied_tools = agent.get("denied_tools")
     if denied_tools is None:
         denied_tools = list(_DEFAULT_JUDGE_DENIED_TOOLS)
-    denied_tools = [t for t in denied_tools if t not in set(allowed_tools)]
+    allowed_names = {t.split("(", 1)[0] for t in allowed_tools}
+    denied_tools = [t for t in denied_tools
+                    if t not in allowed_tools and t not in allowed_names]
     stage_inputs = agent.get("inputs")  # None/[] => all files
     context_dirs = agent.get("context") or []
-    # Copy (not symlink) context when the judge can write, so a prompt-injected
-    # judge cannot write THROUGH ./.context/ to real project files (CWE-59/829).
-    context_writable = bool(_WRITE_TOOLS & set(allowed_tools))
     is_bool = (jc.feedback_type == "bool")
     agent_timeout = agent.get("timeout")
     timeout_value = (agent_timeout if agent_timeout is not None
@@ -3192,8 +3180,7 @@ def _load_agent_judge(jc, config, project_root=None):
         workspace = Path(tempfile.mkdtemp(prefix="agent-judge-"))
         try:
             _stage_agent_workspace(workspace, record, stage_inputs,
-                                   context_dirs, root,
-                                   writable=context_writable)
+                                   context_dirs, root)
             rendered = _render_judge_prompt(prompt, jc, config, arguments,
                                             record)
             full_prompt = rendered + "\n" + contract

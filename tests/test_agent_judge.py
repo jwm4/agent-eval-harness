@@ -299,6 +299,17 @@ class TestRunnerIsolation:
         assert perms == {"allow": ["Read", "Grep", "Glob", "Bash"],
                          "deny": ["WebFetch", "WebSearch", "Agent"]}
 
+    def test_scoped_allow_lifts_the_bare_default_deny(self):
+        """A deny beats an allow, so `Bash` left in the deny list would take
+        away the tool that `Bash(pytest:*)` asks for."""
+        cap = {}
+        judge = _agent_judge(feedback_type="bool",
+                             allowed_tools=["Read", "Bash(pytest:*)"])
+        self._load_and_run(judge, {"passed": True, "rationale": "x"}, cap)
+        perms = cap["from_config_overrides"].get("permissions")
+        assert perms == {"allow": ["Read", "Bash(pytest:*)"],
+                         "deny": ["WebFetch", "WebSearch", "Agent"]}
+
     def test_denied_tools_override(self):
         cap = {}
         judge = _agent_judge(feedback_type="bool",
@@ -595,23 +606,10 @@ class TestAgentJudgeHardening:
         assert (ws / "real.txt").read_text() == "ok"        # normal file still staged
         assert (ws / "output").is_dir()                     # empty verdict dir created
 
-    def test_context_symlinked_when_read_only(self, tmp_path):
-        """A read-only judge gets a symlinked (live) ./.context pointer — the fast path."""
-        from score import _stage_agent_workspace
-        ctx = tmp_path / "ctxdir"
-        ctx.mkdir()
-        (ctx / "doc.md").write_text("reference")
-        ws = tmp_path / "ws"
-        ws.mkdir()
-        _stage_agent_workspace(ws, {"files": {}}, None, ["ctxdir"], tmp_path,
-                               writable=False)
-        staged = ws / ".context" / "ctxdir"
-        assert staged.is_symlink()                       # live pointer, not a copy
-        assert (staged / "doc.md").read_text() == "reference"
-
-    def test_context_copied_when_writable_blocks_write_through(self, tmp_path):
-        """A write-capable judge gets a COPY, so a write can't escape ./.context/
-        to real project files (CWE-59/829)."""
+    def test_context_copied_blocks_write_through(self, tmp_path):
+        """Context is always a COPY, so a write can't escape ./.context/ to real
+        project files (CWE-59/829). Even the default Read/Grep/Glob judge can
+        write: it has to, for output/score.json."""
         from score import _stage_agent_workspace
         ctx = tmp_path / "ctxdir"
         ctx.mkdir()
@@ -619,8 +617,7 @@ class TestAgentJudgeHardening:
         src_file.write_text("original")
         ws = tmp_path / "ws"
         ws.mkdir()
-        _stage_agent_workspace(ws, {"files": {}}, None, ["ctxdir"], tmp_path,
-                               writable=True)
+        _stage_agent_workspace(ws, {"files": {}}, None, ["ctxdir"], tmp_path)
         staged = ws / ".context" / "ctxdir"
         assert not staged.is_symlink()                   # real copy, not a live link
         assert staged.is_dir()

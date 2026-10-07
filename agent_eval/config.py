@@ -2249,6 +2249,17 @@ class EvalConfig:
                     agent_val["runner"],
                     context=f"Judge '{j.get('name', '')}': agent.runner",
                 )
+            # A bare string would be iterated per character downstream
+            # (`denied_tools: Bash` -> deny B,a,s,h), silently denying nothing.
+            for tools_key in ("allowed_tools", "denied_tools"):
+                tools_val = agent_val.get(tools_key)
+                if tools_val is not None and (
+                        not isinstance(tools_val, list)
+                        or any(not isinstance(t, str) for t in tools_val)):
+                    raise ValueError(
+                        f"Judge '{j.get('name', '')}': 'agent.{tools_key}' "
+                        f"must be a list of tool names"
+                    )
             score_range_val = j.get("score_range")
             if score_range_val is not None:
                 jname = j.get("name", "")
