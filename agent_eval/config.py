@@ -1640,7 +1640,7 @@ class JudgeConfig:
     # a tool-using agent run through the runner abstraction, with read-only file
     # tools and a staged, isolated workspace. Permissive mapping (mirrors
     # `arguments`); recognized keys: runner (RunnerConfig), allowed_tools,
-    # context, inputs, timeout, max_budget_usd. A nested `runner:` sub-block is
+    # denied_tools, context, inputs, timeout, max_budget_usd. A nested `runner:` sub-block is
     # parsed into a RunnerConfig by from_yaml.
     agent: dict = field(default_factory=dict)
     # Provider-specific judge options (spec 014), validated by the provider kind
